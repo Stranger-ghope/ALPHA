@@ -131,6 +131,10 @@ jobs:
       - name: Persist state
         run: |
           set -e
+          # git needs an identity to create the commit (the runner has none).
+          git config --local user.name "ConfluenceBot[bot]"
+          git config --local user.email "bot@users.noreply.github.com"
+
           # Load prior branch or start from an empty tree.
           git fetch origin bot-state --depth=1 2>/dev/null || true
           if git ls-remote --heads origin bot-state | grep -q bot-state; then
