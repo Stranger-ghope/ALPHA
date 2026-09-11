@@ -117,6 +117,10 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          # Target wallets come from a secret so the repo stays public-safe
+          # (the wallet list is the bot's core signal — never commit it).
+          GMGN_TARGET_WALLETS: ${{ secrets.GMGN_TARGET_WALLETS }}
+          GMGN_TARGET_WALLETS_FILE: ""   # empty: ignore the committed template
           BOT_LOG_LEVEL: INFO
         run: |
           ARGS="--once --max-scan $MAX_SCAN"

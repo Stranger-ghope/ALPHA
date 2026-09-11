@@ -25,3 +25,6 @@ test_track.json
 Thumbs.db
 .idea/
 .vscode/
+# ── Real wallet list (local only; CI gets it from a secret) ──
+target_wallets.txt
+target_wallets.local.txt

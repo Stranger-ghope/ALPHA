@@ -197,7 +197,14 @@ class BotConfig:
         default_factory=lambda: os.getenv("GMGN_TARGET_WALLETS", "")
     )
     target_wallets_file: str = field(
-        default_factory=lambda: os.getenv("GMGN_TARGET_WALLETS_FILE", "target_wallets.txt")
+        default_factory=lambda: os.getenv(
+            "GMGN_TARGET_WALLETS_FILE",
+            # Prefer the gitignored local real-address file; fall back to the
+            # committed template (no real addresses) so the repo stays public-safe.
+            "target_wallets.local.txt"
+            if os.path.exists(os.path.join(os.path.dirname(__file__), "target_wallets.local.txt"))
+            else "target_wallets.txt",
+        )
     )
     # Min seconds between gmgn-cli calls. GMGN's leaky-bucket limiter allots a
     # burst quota but bans on repeated violations (per IP). A conservative
