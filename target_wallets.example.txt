@@ -1,0 +1,14 @@
+# -----------------------------------------------------------------------------
+# Verified target wallets — one per line. Lines starting with '#' are ignored.
+#
+# This is the whitelist that powers the wallet-overlap confluence gate: a token
+# is only alerted when >= CONFLUENCE_MIN_WALLET_MATCH (default 2) of the wallets
+# listed here appear among its top holders.
+#
+# ONLY add wallets you have actually verified. The bot never trades and never
+# shares this list off-machine; it only reads holder distributions from GMGN.
+# -----------------------------------------------------------------------------
+
+# Example (delete these):
+# ExampleWallet11111111111111111111111111111111
+# 0x000000000000000000000000000000000000dEaD

@@ -1,0 +1,27 @@
+# ── Secrets & credentials — NEVER commit these ──
+.env
+*.env
+.env.local
+env
+MY_GMGN_SECRETS.txt
+GMGN PRIvate KEy*
+GMGN*key*
+
+# ── Runtime state (bot-owned, persisted to the bot-state branch in CI) ──
+bot_state.json
+alert_track.json
+*.state.json
+
+# ── Local dev / scratch ──
+__pycache__/
+*.pyc
+.smoke_test.py
+_smoke_test.py
+.test_track.json
+test_track.json
+
+# ── OS / editor cruft ──
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

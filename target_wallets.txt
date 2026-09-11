@@ -1,0 +1,36 @@
+# Verified target wallets for ConfluenceAlertBot.
+#
+# Methodology: pulled from GMGN's live Smart Money trade feed (track smartmoney
+# --chain sol), cross-checked with portfolio stats. Selection rules:
+#   - must carry GMGN's `smart_degen` (or `launchpad_smart`) positive marker
+#   - must trade real volume across a meaningful book (>= 30 tokens)
+#   - must NOT carry manipulation tags (wash_trader, sandwich/mev_bot,
+#     rat_trader, bundler)
+#   - dev/launcher wallets (created > 50% of traded) are excluded
+#   - actively trading today (presence in the current smartmoney feed)
+#
+# Verified: 2026-09-11 via gmgn-cli portfolio stats. Delete/comment any wallet
+# you do not want the bot to track. Order is not meaningful.
+
+# -- From GMGN smartmoney feed (smart_degen-marked, active today) --
+FowgJ9GD3C3PRWa1yoNsCi2nWxxmSjhzLwL5mX7TA8H3  # smart_degen · 101 tokens · win 19.3% · 7d -$8.1K
+57ZUJMqHuUqMEC1tvzpJunV6inZPSwSmAvbpzZiV8iCB   # smart_degen+trojan · 79 tokens · win 17.2% · 7d +$9.3K
+C9Qy5tGiVrSx5pX2VYctJgYgCUxPru71m561USh64h1c   # smart_degen · 156 tokens · win 83.3% · 7d +$0.7K
+CoHYfUDxSk32F9fZqsdJTaFf8yGU5B4i5GwrfCCm3rHn   # smart_degen+axiom · 579 tokens · win 28.5% · 7d +$12K
+HBXVR4VLwAPwN49bBSuhSaqtQuaXcHNwiZ4hWLEQd8Qe   # smart_degen+gmgm · 84 tokens · win 35.4% · 7d +$1.3K · @LuckyMumu8
+814xLErdgHd9zU42L75ZtGQo957vrTNDXhv4oJWFK26g   # smart_degen · 344 tokens · win 61.9% · 7d +$0.7K
+HACKERpKcBpUjEucqpMPHQ4AJgf4kvpaY1t2VKFfmJxY  # smart_degen · 2056 tokens · win 39.7% · 7d +$17.8K
+AzWnNS9isJR9HZ6WAEAUwqVMu5SAwHsPNmrmEVCroyMS  # smart_degen · 363 tokens · win 39.5% · 7d +$2.1K
+F8Y2n8WgaFGzvZeHbKq12Niu9sdRLidtWRV8iXyM2KBi  # smart_degen · 106 tokens · win 60.0% · 7d +$28K
+8wd3gbiuwTJf7HW1MkqqSy5vBNGbcirhWhKTCLKR9xwT   # smart_degen · 132 tokens · win 43.0% · 7d +$0.9K
+
+# -- From clean cross-token holder clusters (overlapping holdings) --
+CFJr1M2z3SZpQpBMoY3nagpafvS7Uzanq4L7KVXVKi22   # cluster · 795 tokens · win 49.5% · 7d +$261K (no smart tag, strong)
+5hh7UE6i2BtyCvaMMadS71wFwK88JRmtRTfXkjZ3CHvF   # cluster · 215 tokens · win 35.2% · 7d +$32K
+Dgb14LGmMnWzyzc6pJtKm3iEPDJVaCBBUTWktUnTdHgN   # cluster · 85 tokens · win 35.1% · 7d +$17K
+
+# -- Note: these were checked and REJECTED (for transparency) --
+# GgbCFRHHAPv5i1fqt1D1buf8FPNA31oKrkZvXDyZymsT  # smart_degen but LAUNCHER (dev, 764 tokens) - excluded
+# TshXcBsG17iWyk87Dqh5t978FwrrsoxtDgBGaik3pWc  # fresh_wallet / 100% win on 35 toy tokens - excluded
+# AxtZoNYhAxvpv416hW7yzpTdcJeY45t8JyGUYMJXL9G  # -$114K 7d, 12.7% win - excluded
+# DWE8B5e5xjMXHivTy64woMXVgSs1wKJsfM2Fe8FSgUXT # losing 7d - excluded

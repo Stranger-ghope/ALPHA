@@ -1,0 +1,161 @@
+name: bot
+on:
+  # ── Schedule ──
+  # Runs at :03 and :33 every hour (off the :00/:30 to dodge fleet congestion).
+  # 48 runs/day over 30 days ≈ 1440 runs × 1.5 min ≈ 2160 min — fits the free
+  # 2000-min budget in practice (night runs are faster), and matches the bot's
+  # 30-min ROI update cadence. Tighten by deleting one cron line if you want
+  # more headroom.
+  schedule:
+    - cron: "3 0-23 * * *"   # at minute :03 of every hour
+    - cron: "33 0-23 * * *"  # at minute :33 of every hour
+
+  # ── Manual trigger ──
+  workflow_dispatch:
+    inputs:
+      max_scan:
+        description: "Max candidates to vet (default 40)"
+        required: false
+        default: "40"
+      dry_run:
+        description: "Dry run? (true/false)"
+        required: false
+        default: "false"
+
+env:
+  MAX_SCAN: ${{ github.event.inputs.max_scan || '40' }}
+  DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
+
+# One run at a time: if a new invocation overlaps, it waits (not cancels).
+concurrency:
+  group: confluence-bot-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # to push the bot-state branch
+
+    steps:
+      # ── Checkout the app (current branch) ─────────────────────────────
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      # ── Restore state from the bot-state branch ───────────────────────
+      # The bot's dedupe + ROI tracking live in bot_state.json +
+      # alert_track.json. Pull them into the worktree from the bot-state
+      # orphan branch so a fresh runner VM starts with the previous state.
+      - name: Restore state
+        run: |
+          rm -f bot_state.json alert_track.json
+          if git ls-remote --heads origin bot-state | grep -q bot-state; then
+            git fetch origin bot-state --depth=1
+            git show "origin/bot-state:bot_state.json"  > bot_state.json  2>/dev/null || true
+            git show "origin/bot-state:alert_track.json" > alert_track.json 2>/dev/null || true
+            echo "restored prior state"
+          else
+            echo "bot-state branch missing (first run) — starting fresh"
+          fi
+
+      # ── Setup Node (for gmgn-cli) ─────────────────────────────────────
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install gmgn-cli
+        run: npm install -g gmgn-cli
+
+      # ── Setup Python ──────────────────────────────────────────────────
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install Python deps
+        run: pip install -r requirements.txt
+
+      # ── Write the GMGN credentials file for gmgn-cli ──────────────────
+      # gmgn-cli reads ~/.config/gmgn/.env (not process env), so we materialize
+      # it from the Actions secrets on each fresh runner. config.py's
+      # _load_gmgn_env() reads the same file, so this covers both the CLI
+      # (data layer) and the bot.
+      - name: Configure gmgn credentials
+        env:
+          GMGN_API_KEY: ${{ secrets.GMGN_API_KEY }}
+          GMGN_PRIVATE_KEY: ${{ secrets.GMGN_PRIVATE_KEY }}
+        run: |
+          mkdir -p "$HOME/.config/gmgn"
+          umask 077
+          # Write secret values via env vars injected by Actions. The API key is a
+          # plain scalar so it stays unquoted; the private key is a multi-line
+          # PEM so it is quoted (config.py's loader joins quoted values that
+          # begin with '-----BEGIN'). A '$' inside a secret value is not
+          # recursively expanded in an unquoted heredoc, so this is safe.
+          # Normalize CRLF -> LF so a Windows-source PEM stays valid.
+          cat > "$HOME/.config/gmgn/.env" <<ENVEOF
+          GMGN_API_KEY=$GMGN_API_KEY
+          GMGN_PRIVATE_KEY="$GMGN_PRIVATE_KEY"
+          ENVEOF
+          tr -d '\r' < "$HOME/.config/gmgn/.env" > "$HOME/.config/gmgn/.env.lf"
+          mv "$HOME/.config/gmgn/.env.lf" "$HOME/.config/gmgn/.env"
+          # Sanity checks
+          if grep -q "GMGN_API_KEY=.\+" "$HOME/.config/gmgn/.env"; then
+            echo "GMGN credentials written."
+          else
+            echo "::warning::GMGN_API_KEY secret missing — bot will fail auth."
+          fi
+          if grep -q 'BEGIN PRIVATE KEY' "$HOME/.config/gmgn/.env"; then
+            echo "Private key present (PEM)."
+          else
+            echo "::warning::GMGN_PRIVATE_KEY secret missing or malformed — reads may still work (exists auth)."
+          fi
+
+      # ── Run the bot ───────────────────────────────────────────────────
+      - name: Run bot
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          BOT_LOG_LEVEL: INFO
+        run: |
+          ARGS="--once --max-scan $MAX_SCAN"
+          if [ "$DRY_RUN" = "true" ]; then ARGS="$ARGS --dry-run"; fi
+          python bot.py $ARGS
+
+      # ── Persist state to the bot-state branch ─────────────────────────
+      # Rewrites bot_state.json + alert_track.json on the orphan bot-state
+      # branch. Branch contains ONLY these two files (build artifacts and
+      # source never enter it). Only pushes when the files actually changed,
+      # to avoid an empty commit every scheduled tick.
+      - name: Persist state
+        run: |
+          set -e
+          # Load prior branch or start from an empty tree.
+          git fetch origin bot-state --depth=1 2>/dev/null || true
+          if git ls-remote --heads origin bot-state | grep -q bot-state; then
+            BASE=origin/bot-state
+          else
+            BASE=$(git hash-object -t tree /dev/null)
+          fi
+
+          # Build a NEW orphan branch whose tree = {bot_state.json, alert_track.json}.
+          git checkout -q --orphan _state
+          rm -f .git/index
+          git add bot_state.json alert_track.json 2>/dev/null || true
+          TREE=$(git write-tree)
+
+          # Compare against the previous branch tip. Only commit if changed.
+          if git ls-remote --heads origin bot-state | grep -q bot-state; then
+            PREV=$(git rev-parse origin/bot-state^{tree})
+            if [ "$TREE" = "$PREV" ]; then
+              echo "State unchanged — nothing to push."
+              git checkout -q -- .
+              exit 0
+            fi
+          fi
+
+          git commit-tree -m "bot state $(date -u '+%Y-%m-%d %H:%M UTC')" "$TREE" > commit
+          git update-ref refs/heads/bot-state "$(cat commit)" "$(git rev-parse --verify origin/bot-state 2>/dev/null || true)"
+          git push -q origin bot-state
+          echo "Pushed updated state."
