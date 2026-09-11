@@ -50,6 +50,7 @@ import shutil
 import subprocess
 import sys
 import time
+from datetime import datetime
 from dataclasses import replace as dataclass_replace
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -82,19 +83,35 @@ MINUTE = 60
 # ─────────────────────────────────────────────────────────────────────────
 
 
+class RateLimitError(RuntimeError):
+    """Raised when GMGN returns HTTP 429 (rate limited / banned).
+
+    Carries the reset time from the server message so the caller can wait and
+    retry instead of hammering (which extends the ban).
+    """
+
+    def __init__(self, message: str, reset_at: Optional[float] = None):
+        super().__init__(message)
+        self.reset_at = reset_at
+
+
 class GmgnCli:
     """Runs `gmgn-cli <args> --raw`, returns parsed JSON.
 
     - paces calls (token-bucket-ish delay) to stay under the rate limiter
     - decodes stdout as UTF-8 (gmgn-cli emits JSON with emoji/token symbols)
     - on Windows, shells out through cmd (the npm .CMD stub needs it)
-    - translates 429 (RATE_LIMIT_BANNED) into a retryable exception; the
-      caller decides whether to wait, keeping the aggressive "stop and tell
-      the user" behaviour from the skills.
+    - translates 429 (RATE_LIMIT_EXCEEDED / RATE_LIMIT_BANNED) into a
+      RateLimitError carrying the server reset time, so the loop can stop
+      and wait rather than hammer the cooldown (which extends the ban).
     """
 
-    def __init__(self, pace_seconds: float = 0.35):
-        self.pace = max(0.05, float(pace_seconds))
+    def __init__(self, pace_seconds: float = 1.5):
+        # A conservative pace for the free-tier per-IP quota. GMGN's leaky
+        # bucket allows ~20 req/s bursts but BANS on repeated violations; the
+        # safe sustained rate for a scan that fires many lookups per token is
+        # far lower. 1.5s between calls ≈ 40 req/min — slow but ban-resistant.
+        self.pace = max(0.2, float(pace_seconds))
         self._last_call = 0.0
 
     def _pace(self) -> None:
@@ -103,11 +120,27 @@ class GmgnCli:
             time.sleep(wait)
         self._last_call = time.monotonic()
 
+    @staticmethod
+    def _reset_from_message(msg: str) -> Optional[float]:
+        """Extract the unix reset time from a GMGN 429 message.
+
+        Messages look like: '... Rate limit resets at 2026-09-11 20:04:19
+        GMT+00:00 (~30s remaining). ...' — parse the ISO-ish datetime.
+        """
+        m = re.search(r"resets at (.+?) GMT", msg)
+        if not m:
+            return None
+        try:
+            dt = datetime.strptime(m.group(1).strip(), "%Y-%m-%d %H:%M:%S")
+            return dt.timestamp()
+        except ValueError:
+            return None
+
     def cli(self, *args: str, timeout: int = 40) -> Any:
         """Run one gmgn-cli call with --raw appended. Returns parsed JSON.
 
-        Raises RuntimeError on non-zero exit (esp. rate-limited), OSError if
-        gmgn-cli is not installed.
+        Raises RateLimitError on 429 (with server reset time), RuntimeError on
+        other non-zero exits, OSError if gmgn-cli is not installed.
         """
         cmd = shutil.which("gmgn-cli") or "gmgn-cli"
         self._pace()
@@ -118,9 +151,13 @@ class GmgnCli:
             shell=(os.name == "nt"),
         )
         out = proc.stdout.decode("utf-8", errors="replace") if proc.stdout else ""
+        err = proc.stderr.decode("utf-8", errors="replace") if proc.stderr else ""
+        combined = (err or out or "gmgn-cli failed")
         if proc.returncode != 0:
-            err = proc.stderr.decode("utf-8", errors="replace") if proc.stderr else ""
-            raise RuntimeError((err or out or "gmgn-cli failed").strip()[:300])
+            if "429" in combined or "RATE_LIMIT" in combined:
+                raise RateLimitError(combined.strip()[:300],
+                                     self._reset_from_message(combined))
+            raise RuntimeError(combined.strip()[:300])
         if not out.strip():
             raise RuntimeError("gmgn-cli returned empty response (rate limited?)")
         try:
@@ -538,9 +575,15 @@ class AlertTracker:
         return sent
 
     def _current(self, rec: Dict[str, Any]) -> Dict[str, Any]:
-        """Live MC/price for a token, via `token info`."""
+        """Live MC/price for a token, via `token info`.
+
+        On a rate-limit, back off past the reset rather than hammering.
+        """
         try:
             info = self.cli.info(self.chain, rec["address"])
+        except RateLimitError as e:
+            self._on_rate_limit(e)
+            info = {}
         except Exception as e:
             logger.warning("Track info failed for %s: %s", rec.get("symbol", "?"), e)
             info = {}
@@ -622,6 +665,9 @@ class ConfluenceAlertBot:
             tokens = self.cli.trending(self.chain)
             logger.info("Trending feed returned %d tokens", len(tokens))
             return tokens
+        except RateLimitError as e:
+            self._on_rate_limit(e)
+            return []
         except Exception as e:  # defensive: discovery must never kill the loop
             logger.error("Error fetching trending tokens: %s", e)
             return []
@@ -632,9 +678,26 @@ class ConfluenceAlertBot:
             tokens = self.cli.trenches(self.chain)
             logger.info("Trench feed returned %d tokens", len(tokens))
             return tokens
+        except RateLimitError as e:
+            self._on_rate_limit(e)
+            return []
         except Exception as e:
             logger.error("Error fetching trench tokens: %s", e)
             return []
+
+    # ─────────────────────────────────────────────────────────────────────
+    # Rate-limit handling
+    # ─────────────────────────────────────────────────────────────────────
+
+    def _on_rate_limit(self, e: "RateLimitError") -> None:
+        """Called when GMGN 429s. Sleeps past the reset so the loop doesn't
+        hammer the cooldown and extend the ban (the fatal failure mode seen
+        in CI)."""
+        reset = getattr(e, "reset_at", None)
+        wait = (reset - time.time()) + 2 if reset else 30.0
+        wait = max(5.0, min(wait, 120.0))
+        logger.warning("GMGN rate-limited; sleeping %.0fs before retry", wait)
+        time.sleep(wait)
 
     # ─────────────────────────────────────────────────────────────────────
     # Confluence & security engine
@@ -646,6 +709,9 @@ class ConfluenceAlertBot:
         the discovery rows). Returns {} on failure so the gate fails closed."""
         try:
             return self.cli.security(self.chain, token_address)
+        except RateLimitError as e:
+            self._on_rate_limit(e)
+            return {}
         except Exception as e:
             logger.warning("Security lookup failed for %s: %s",
                            short_addr(token_address, 6), e)
@@ -792,6 +858,9 @@ class ConfluenceAlertBot:
         # -- holder distribution / wallet overlap --
         try:
             holders = self.cli.holders(self.chain, info["address"])
+        except RateLimitError as e:
+            self._on_rate_limit(e)
+            holders = []
         except Exception as e:
             logger.warning("Holder lookup failed for %s: %s",
                            short_addr(info["address"], 6), e)

@@ -23,7 +23,7 @@ on:
         default: "false"
 
 env:
-  MAX_SCAN: ${{ github.event.inputs.max_scan || '40' }}
+  MAX_SCAN: ${{ github.event.inputs.max_scan || '10' }}
   DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
 
 # One run at a time: if a new invocation overlaps, it waits (not cancels).

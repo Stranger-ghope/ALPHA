@@ -175,8 +175,11 @@ class BotConfig:
     )
     # How many unique candidates are run through the expensive security/holder
     # gates per cycle. Guards the rate-limit budget on large trench feeds.
+    # Each candidate costs ~2 gmgn calls (security + holders); a free-tier IP
+    # quota bans fast, so keep this modest (the real high-confluence hits are
+    # few per cycle anyway).
     max_scan_per_cycle: int = field(
-        default_factory=lambda: int(os.getenv("BOT_MAX_SCAN_PER_CYCLE", "20"))
+        default_factory=lambda: int(os.getenv("BOT_MAX_SCAN_PER_CYCLE", "10"))
     )
     # Local file persisting which tokens have already been alerted, so a
     # restart does not re-notify the same token. Empty = keep in-memory only.
@@ -196,11 +199,12 @@ class BotConfig:
     target_wallets_file: str = field(
         default_factory=lambda: os.getenv("GMGN_TARGET_WALLETS_FILE", "target_wallets.txt")
     )
-    # Min seconds between gmgn-cli calls. GMGN's leaky-bucket limiter allots
-    # 20 requests/sec; a 0.35s pace keeps well under that, so a burst never
-    # accumulates into a ban.
+    # Min seconds between gmgn-cli calls. GMGN's leaky-bucket limiter allots a
+    # burst quota but bans on repeated violations (per IP). A conservative
+    # ~1.5s pace (~40 req/min) keeps a scan from accumulating a ban — the
+    # failure mode seen in CI.
     cli_pace_seconds: float = field(
-        default_factory=lambda: float(os.getenv("BOT_CLI_PACE_S", "0.35"))
+        default_factory=lambda: float(os.getenv("BOT_CLI_PACE_S", "1.5"))
     )
 
     telegram: TelegramConfig = field(default_factory=TelegramConfig)
