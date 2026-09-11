@@ -14,9 +14,9 @@ on:
   workflow_dispatch:
     inputs:
       max_scan:
-        description: "Max candidates to vet (default 40)"
+        description: "Max candidates to vet (default 10)"
         required: false
-        default: "40"
+        default: "10"
       dry_run:
         description: "Dry run? (true/false)"
         required: false
