@@ -47,6 +47,8 @@ jobs:
       # The bot's dedupe + ROI tracking live in bot_state.json +
       # alert_track.json. Pull them into the worktree from the bot-state
       # orphan branch so a fresh runner VM starts with the previous state.
+      # Note: these files are gitignored on main, so git show is the reliable
+      # way to read them out of the bot-state branch (not plain checkout).
       - name: Restore state
         run: |
           rm -f bot_state.json alert_track.json
@@ -54,7 +56,11 @@ jobs:
             git fetch origin bot-state --depth=1
             git show "origin/bot-state:bot_state.json"  > bot_state.json  2>/dev/null || true
             git show "origin/bot-state:alert_track.json" > alert_track.json 2>/dev/null || true
-            echo "restored prior state"
+            if [ -s bot_state.json ] && [ -s alert_track.json ]; then
+              echo "restored prior state"
+            else
+              echo "bot-state branch empty or missing state files — starting clean"
+            fi
           else
             echo "bot-state branch missing (first run) — starting fresh"
           fi
@@ -150,7 +156,10 @@ jobs:
           # Build a NEW orphan branch whose tree = {bot_state.json, alert_track.json}.
           git checkout -q --orphan _state
           rm -f .git/index
-          git add bot_state.json alert_track.json 2>/dev/null || true
+          # Force-add: these files are gitignored on main, so a plain `git add`
+          # is a silent no-op and would write an EMPTY tree (losing the state).
+          # `-f` puts them in the index regardless of ignore rules.
+          git add -f bot_state.json alert_track.json
           TREE=$(git write-tree)
 
           # Compare against the previous branch tip. Only commit if changed.
@@ -158,7 +167,7 @@ jobs:
             PREV=$(git rev-parse origin/bot-state^{tree})
             if [ "$TREE" = "$PREV" ]; then
               echo "State unchanged — nothing to push."
-              git checkout -q -- .
+              git reset --hard -q    # leave the runner on a clean, non-orphan worktree
               exit 0
             fi
           fi
